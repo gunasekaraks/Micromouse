@@ -117,7 +117,7 @@ void MotorControl::moveForward(int speed)
     // Speed compensation for motor RPM difference
     // Left motor: 630 RPM, Right motor: 300 RPM
     // Adjust to balance the speeds while ensuring both motors can turn
-    int leftSpeed = speed * 0.87;   // Left motor at 80%
+    int leftSpeed = speed * 0.86;   // Left motor at 80%
     int rightSpeed = speed;          // Right motor at full requested speed
 
     setMotorSpeed(leftSpeed, rightSpeed);
