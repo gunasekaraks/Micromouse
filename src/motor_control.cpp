@@ -55,15 +55,15 @@ void MotorControl::setMotorASpeed(int speed)
 
     if (speed > 0)
     {
-        // Forward: IN1 = PWM, IN2 = 0
-        ledcWrite(pwmChannelA1, speed);
-        ledcWrite(pwmChannelA2, 0);
+        // Forward: IN1 = 0, IN2 = PWM (swapped)
+        ledcWrite(pwmChannelA1, 0);
+        ledcWrite(pwmChannelA2, speed);
     }
     else if (speed < 0)
     {
-        // Backward: IN1 = 0, IN2 = PWM
-        ledcWrite(pwmChannelA1, 0);
-        ledcWrite(pwmChannelA2, -speed);
+        // Backward: IN1 = PWM, IN2 = 0 (swapped)
+        ledcWrite(pwmChannelA1, -speed);
+        ledcWrite(pwmChannelA2, 0);
     }
     else
     {
@@ -82,15 +82,15 @@ void MotorControl::setMotorBSpeed(int speed)
 
     if (speed > 0)
     {
-        // Forward: IN3 = PWM, IN4 = 0
-        ledcWrite(pwmChannelB1, speed);
-        ledcWrite(pwmChannelB2, 0);
+        // Forward: IN3 = 0, IN4 = PWM (swapped)
+        ledcWrite(pwmChannelB1, 0);
+        ledcWrite(pwmChannelB2, speed);
     }
     else if (speed < 0)
     {
-        // Backward: IN3 = 0, IN4 = PWM
-        ledcWrite(pwmChannelB1, 0);
-        ledcWrite(pwmChannelB2, -speed);
+        // Backward: IN3 = PWM, IN4 = 0 (swapped)
+        ledcWrite(pwmChannelB1, -speed);
+        ledcWrite(pwmChannelB2, 0);
     }
     else
     {
@@ -114,7 +114,13 @@ void MotorControl::moveForward(int speed)
     if (speed < 0)
         speed = 0;
 
-    setMotorSpeed(speed, speed);
+    // Speed compensation for motor RPM difference
+    // Left motor: 630 RPM, Right motor: 300 RPM
+    // Adjust to balance the speeds while ensuring both motors can turn
+    int leftSpeed = speed * 0.87;   // Left motor at 80%
+    int rightSpeed = speed;          // Right motor at full requested speed
+
+    setMotorSpeed(leftSpeed, rightSpeed);
 }
 
 void MotorControl::moveBackward(int speed)

@@ -1,81 +1,77 @@
 #include <Arduino.h>
+#include "encoder.h"
+#include "motor_control.h"
+
+// Create encoder instance with UPDATED motor specs:
+// Left motor: pins D35 (A), D34 (B), PPR 207, RPM 630
+// Right motor: pins D19 (A), D26 (B), PPR 357, RPM 300
+// Wheel diameter: 34mm (0.034m)
+
+Encoder encoder(35, 34, 19, 26, 0.034 * 3.14159, 207, 357);
+
+// Create motor control instance with DRV8833:
+// Motor A (Left): IN1=D25, IN2=D13
+// Motor B (Right): IN3=D14, IN4=D18
+// Sleep pin=D32
+
+MotorControl motorControl(25, 13, 14, 18, 32);
 
 void setup()
 {
     Serial.begin(115200);
     delay(1000);
 
-    Serial.println("\n=== DRV8833 Motor Driver Diagnostic Test ===\n");
+    Serial.println("\n\n=== Micromouse Motor & Encoder Control (DRV8833) ===");
+    Serial.println("Left Motor (PPR: 207) - Encoder Pins: D35, D34");
+    Serial.println("Right Motor (PPR: 357) - Encoder Pins: D19, D26");
+    Serial.println("Motor A (Left): IN1=D25, IN2=D13");
+    Serial.println("Motor B (Right): IN3=D14, IN4=D18");
+    Serial.println("Sleep Pin: D32");
+    Serial.println("Wheel Diameter: 34mm");
+    Serial.println("===================================================\n");
 
-    // Pin definitions
-    int AIN1 = 25;
-    int AIN2 = 13;
-    int BIN1 = 14;
-    int BIN2 = 18;
-    int STBY = 32;git branch -M main
+    // Initialize encoders
+    encoder.begin();
 
+    // Initialize motor control with encoder reference
+    motorControl.begin(&encoder);
 
+    // Set PID coefficients for straight line movement
+    motorControl.setPIDCoefficients(0.8, 0.05, 0.3);
 
-    // Set as outputs
-    pinMode(AIN1, OUTPUT);
-    pinMode(AIN2, OUTPUT);
-    pinMode(BIN1, OUTPUT);
-    pinMode(BIN2, OUTPUT);
-    pinMode(STBY, OUTPUT);
-
-    // Enable DRV8833 (Sleep pin HIGH)
-    digitalWrite(STBY, HIGH);
-    Serial.println("1. Sleep pin (D32) set to HIGH");
-    delay(500);
-
-    // Setup PWM
-    const int PWM_FREQ = 20000;
-    const int PWM_RESOLUTION = 8;
-    
-    ledcSetup(0, PWM_FREQ, PWM_RESOLUTION);
-    ledcSetup(1, PWM_FREQ, PWM_RESOLUTION);
-    ledcSetup(2, PWM_FREQ, PWM_RESOLUTION);
-    ledcSetup(3, PWM_FREQ, PWM_RESOLUTION);
-
-    ledcAttachPin(AIN1, 0);
-    ledcAttachPin(AIN2, 1);
-    ledcAttachPin(BIN1, 2);
-    ledcAttachPin(BIN2, 3);
-
-    Serial.println("2. PWM channels configured (20kHz)\n");
-
-    // Test Motor A (Left)
-    Serial.println("Testing Motor A (Left):");
-    Serial.println("- Setting AIN1 = 255, AIN2 = 0 (Forward at MAX speed)");
-    ledcWrite(0, 255);  // AIN1 PWM - FULL SPEED
-    ledcWrite(1, 0);    // AIN2 = 0
-    delay(2000);
-    Serial.println("- Motor should be spinning forward at full speed\n");
-
-    ledcWrite(0, 0);
-    ledcWrite(1, 0);
     delay(1000);
 
-    // Test Motor B (Right)
-    Serial.println("Testing Motor B (Right):");
-    Serial.println("- Setting BIN1 = 255, BIN2 = 0 (Forward at MAX speed)");
-    ledcWrite(2, 255);  // BIN1 PWM - FULL SPEED
-    ledcWrite(3, 0);    // BIN2 = 0
+    Serial.println("\n=== CONTINUOUS FORWARD MOVEMENT ===");
+    Serial.println("Robot will continuously move forward");
+    Serial.println("Monitoring encoder readings...\n");
+    
     delay(2000);
-    Serial.println("- Motor should be spinning forward at full speed\n");
-
-    ledcWrite(2, 0);
-    ledcWrite(3, 0);
-
-    Serial.println("=== Test Complete ===");
-    Serial.println("If motors didn't spin:");
-    Serial.println("1. Check OUT pins are connected to motors");
-    Serial.println("2. Check motor power supply voltage");
-    Serial.println("3. Check GND connection between ESP32 and DRV8833");
 }
 
 void loop()
 {
-    delay(1000);
+    // Continuously move forward
+    motorControl.moveForward(200);
+
+    // Print real-time distance information
+    float leftDistance = encoder.getDistance1() * 100;  // Convert to cm
+    float rightDistance = encoder.getDistance2() * 100;  // Convert to cm
+    float resultantDistance = encoder.getResultantDistance() * 100;  // Convert to cm
+
+    long leftPulses = encoder.getPulseCount1();
+    long rightPulses = encoder.getPulseCount2();
+
+    Serial.print("Left: ");
+    Serial.print(leftDistance, 2);
+    Serial.print("cm | Right: ");
+    Serial.print(rightDistance, 2);
+    Serial.print("cm | Resultant: ");
+    Serial.print(resultantDistance, 2);
+    Serial.print("cm | L:");
+    Serial.print(leftPulses);
+    Serial.print(" R:");
+    Serial.println(rightPulses);
+    
+    delay(50);  // Reduced delay for smoother operation
 }
 
