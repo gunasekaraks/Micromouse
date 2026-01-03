@@ -38,7 +38,7 @@ private:
 public:
     // Constructor (supports different PPR for each wheel)
     Encoder(int pinA1 = 35, int pinB1 = 34, int pinA2 = 19, int pinB2 = 26,
-        float wheelCirc = 0.065 * 3.14159, int ppr1 = 357, int ppr2 = 207);
+        float wheelCirc = 0.034 * 3.14159, int ppr1 = 207, int ppr2 = 357);
 
     // Initialization
     void begin();
