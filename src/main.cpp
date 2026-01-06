@@ -19,9 +19,9 @@ MotorControl motorControl(25, 13, 14, 18, 32);
 VL53L0XV2 tofSensor(17);  // XSHUT pin 17
 
 // Parameters
-int baseSpeed = 180;
+int baseSpeed = 160;
 float initialYaw = 0.0;
-float yawTolerance = 2.0;  // degrees
+float yawTolerance = 1;  // degrees
 const float moveDistance = 0.20;  // 20cm in meters
 
 // Forward declarations
@@ -110,7 +110,7 @@ void setup()
     enableToF();  // Ensure ToF is powered
     delay(200);
     unsigned long tofStartTime = millis();
-    while (millis() - tofStartTime < 3000) {
+    while (millis() - tofStartTime < 5000) {
         uint16_t distance = tofSensor.getDistance();
         Serial.print("ToF Distance: ");
         Serial.print(distance);
@@ -126,7 +126,7 @@ void setup()
     // Initialize encoders and motors
     encoder.begin();
     motorControl.begin(&encoder);
-    motorControl.setPIDCoefficients(2.5, 0.0, 0.0);  // PID tuned for pulse counts
+    motorControl.setPIDCoefficients(2.5, 0.0005, 0.00005);  // PID tuned for pulse counts
     
     delay(1000);
     Serial.println("Starting navigation...\n");
@@ -206,6 +206,9 @@ void loop()
         // Update WiFi
         wifiMgr.update();
         
+        // Update gyro
+        updateGyro();
+        
         // Use encoder PID for motor control
         motorControl.moveForward(baseSpeed);
         motorControl.updateStraightLineControl();
@@ -216,6 +219,7 @@ void loop()
         float leftDist = encoder.getDistance1();
         float rightDist = encoder.getDistance2();
         float avgDist = (abs(leftDist) + abs(rightDist)) / 2.0;
+        long encoderError = leftCount - rightCount + 8 ;
         
         // Get motor speeds
         int leftSpeed = motorControl.getCurrentSpeedA();
@@ -224,9 +228,10 @@ void loop()
         // Build output string (no gyro during movement)
         String output = "L:" + String(leftCount) + 
                         "|R:" + String(rightCount) + 
-                        "|Dist:" + String(avgDist, 3) +
+                        "|Err:" + String(encoderError) +
                         "|L_Speed:" + String(leftSpeed) +
                         "|R_Speed:" + String(rightSpeed);
+                        
         
         // Send to Serial and WiFi
         wifiMgr.sendDataLn(output);

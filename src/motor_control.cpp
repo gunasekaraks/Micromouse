@@ -199,7 +199,7 @@ void MotorControl::updateStraightLineControl()
     long rightCount = encoder->getPulseCount2();
 
     // Calculate error (difference between left and right pulse counts)
-    float error = leftCount - rightCount ;
+    float error = leftCount - rightCount + 8  ;
 
     // PID calculation
     integralError += error;
