@@ -4,7 +4,8 @@ MotorControl::MotorControl(int ain1, int ain2, int bin1, int bin2, int stby)
     : pinAin1(ain1), pinAin2(ain2), pinBin1(bin1), pinBin2(bin2), pinSTBY(stby),
       pwmChannelA1(0), pwmChannelA2(1), pwmChannelB1(2), pwmChannelB2(3),
       pwmFrequency(20000), pwmResolution(8),
-      currentSpeedA(0), currentSpeedB(0), maxSpeed(255),
+    currentSpeedA(0), currentSpeedB(0), maxSpeed(255),
+    speedBiasA(0), speedBiasB(0),
       kp(1.0), ki(0.0), kd(0.5),
       previousError(0.0), integralError(0.0),
       encoder(nullptr), isMoving(false),
@@ -55,15 +56,15 @@ void MotorControl::setMotorASpeed(int speed)
 
     if (speed > 0)
     {
-        // Forward: IN1 = 0, IN2 = PWM (swapped)
-        ledcWrite(pwmChannelA1, 0);
-        ledcWrite(pwmChannelA2, speed);
+        // Forward: IN1 = PWM, IN2 = 0 (motor wiring reversed)
+        ledcWrite(pwmChannelA1, speed);
+        ledcWrite(pwmChannelA2, 0);
     }
     else if (speed < 0)
     {
-        // Backward: IN1 = PWM, IN2 = 0 (swapped)
-        ledcWrite(pwmChannelA1, -speed);
-        ledcWrite(pwmChannelA2, 0);
+        // Backward: IN1 = 0, IN2 = PWM (motor wiring reversed)
+        ledcWrite(pwmChannelA1, 0);
+        ledcWrite(pwmChannelA2, -speed);
     }
     else
     {
@@ -114,13 +115,12 @@ void MotorControl::moveForward(int speed)
     if (speed < 0)
         speed = 0;
 
-    // Speed compensation for motor RPM difference
-    // Left motor: 630 RPM, Right motor: 300 RPM
-    // Adjust to balance the speeds while ensuring both motors can turn
-    int leftSpeed = speed * 0.86;   // Left motor at 80%
-    int rightSpeed = speed;          // Right motor at full requested speed
+    // Apply optional per-motor bias to correct hardware drift
+    int speedA = speed + speedBiasA;
+    int speedB = speed + speedBiasB;
 
-    setMotorSpeed(leftSpeed, rightSpeed);
+    setMotorSpeed(speedA, speedB);
+    isMoving = true;  // Enable PID control
 }
 
 void MotorControl::moveBackward(int speed)
@@ -194,15 +194,20 @@ void MotorControl::updateStraightLineControl()
     if (!encoder || !isMoving)
         return;
 
-    // Get current distances
-    float leftDistance = encoder->getDistance1();
-    float rightDistance = encoder->getDistance2();
+    // Get current pulse counts
+    long leftCount = encoder->getPulseCount1();
+    long rightCount = encoder->getPulseCount2();
 
-    // Calculate error (difference between left and right distances)
-    float error = leftDistance - rightDistance;
+    // Calculate error (difference between left and right pulse counts)
+    float error = leftCount - rightCount ;
 
     // PID calculation
     integralError += error;
+    
+    // Anti-windup: limit integral
+    if (integralError > 500) integralError = 500;
+    if (integralError < -500) integralError = -500;
+    
     float derivative = error - previousError;
     previousError = error;
 

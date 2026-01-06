@@ -65,7 +65,7 @@ void IRAM_ATTR Encoder::encoderISR2()
 void Encoder::handleEncoder1()
 {
     int b = digitalRead(encoderPinB1);
-    if (b == LOW)  // Inverted for left motor
+    if (b == HIGH)  // Reversed: HIGH = forward for left motor
     {
         pulseCount1++;
         lastDirection1 = 1;

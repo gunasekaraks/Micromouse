@@ -28,6 +28,8 @@ private:
     int currentSpeedA;
     int currentSpeedB;
     int maxSpeed;
+    int speedBiasA;  // Per-motor bias to correct drift (left)
+    int speedBiasB;  // Per-motor bias to correct drift (right)
 
     // PID control for straight line movement
     float kp, ki, kd;  // PID coefficients
@@ -72,11 +74,13 @@ public:
     bool isMovingForward() const;
     float getTargetDistance() const;
 
+    // Direct motor control (public for custom speed control)
+    void setMotorASpeed(int speed);  // -255 to 255
+    void setMotorBSpeed(int speed);  // -255 to 255
+
 private:
     // Internal motor control
     void setMotorSpeed(int speedA, int speedB);
-    void setMotorASpeed(int speed);  // -255 to 255
-    void setMotorBSpeed(int speed);  // -255 to 255
 };
 
 #endif
