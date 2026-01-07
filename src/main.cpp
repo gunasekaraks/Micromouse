@@ -5,9 +5,10 @@
 #include "wifi_manager.h"
 #include "gyro.h"
 #include "vl53l0x_v2.h"
+#include "turn.h"
 
 // WiFi Manager
-WiFiManager wifiMgr("Amiru", "amiru123");
+WiFiManager wifiMgr("slt ftth", "71091044");
 
 // Encoder instance
 Encoder encoder(35, 34, 19, 26, 0.034 * 3.14159, 357, 357);
@@ -15,20 +16,18 @@ Encoder encoder(35, 34, 19, 26, 0.034 * 3.14159, 357, 357);
 // Motor control instance
 MotorControl motorControl(25, 13, 14, 18, 32);
 
-// ToF sensor
-VL53L0XV2 tofSensor(17);  // XSHUT pin 17
+// ToF sensor is declared in vl53l0x_v2.cpp
 
 // Parameters
 int baseSpeed = 160;
 float initialYaw = 0.0;
 float yawTolerance = 1;  // degrees
 const float moveDistance = 0.20;  // 20cm in meters
+unsigned long lastTofReadTime = 0;  // Track when we last read ToF
 
 // Forward declarations
 void disableGyroInterrupt();
 void enableGyroInterrupt();
-void disableToF();
-void enableToF();
 void alignToYaw(float targetYaw);
 
 void setup()
@@ -90,38 +89,16 @@ void setup()
     disableGyroInterrupt();
     delay(100);
     
-    // Enable ToF (pull XSHUT high)
-    pinMode(17, OUTPUT);
-    enableToF();
-    delay(200);
-    
-    if (!tofSensor.begin()) {
-        Serial.println("ERROR: ToF sensor initialization failed!");
-        enableGyroInterrupt();
-        while(1) { delay(1000); }  // Halt
-    }
-    Serial.println("ToF sensor ready");
+    setupToF();
     enableGyroInterrupt();
     
-    // Print ToF readings for 3 seconds (pause gyro to avoid I2C conflicts)
-    Serial.println("Reading ToF for 3 seconds...");
+    // Flush ToF readings for 1 second
+    Serial.println("Flushing ToF sensor...");
     disableGyroInterrupt();
-    delay(100);
-    enableToF();  // Ensure ToF is powered
-    delay(200);
-    unsigned long tofStartTime = millis();
-    while (millis() - tofStartTime < 5000) {
-        uint16_t distance = tofSensor.getDistance();
-        Serial.print("ToF Distance: ");
-        Serial.print(distance);
-        Serial.println(" mm");
-        delay(200);
-    }
-    Serial.println("ToF test complete\n");
+    flushToF();
     enableGyroInterrupt();
     
-    // Give I2C time to settle again
-    delay(500);
+    Serial.println("ToF sensor ready\n");
 
     // Initialize encoders and motors
     encoder.begin();
@@ -130,15 +107,6 @@ void setup()
     
     delay(1000);
     Serial.println("Starting navigation...\n");
-}
-
-void disableToF() {
-    digitalWrite(17, LOW);  // Pull XSHUT low to power down ToF
-}
-
-void enableToF() {
-    digitalWrite(17, HIGH);  // Pull XSHUT high to enable ToF
-    delay(100);  // Wait for ToF to boot
 }
 
 void disableGyroInterrupt() {
@@ -198,96 +166,10 @@ void loop()
     // Update WiFi connections
     wifiMgr.update();
     
-    // Move 20cm forward
-    Serial.println("Moving 20cm forward...");
-    encoder.reset(true);
-    
-    while (true) {
-        // Update WiFi
-        wifiMgr.update();
-        
-        // Update gyro
-        updateGyro();
-        
-        // Use encoder PID for motor control
-        motorControl.moveForward(baseSpeed);
-        motorControl.updateStraightLineControl();
-        
-        // Read encoder data
-        long leftCount = encoder.getPulseCount1();
-        long rightCount = encoder.getPulseCount2();
-        float leftDist = encoder.getDistance1();
-        float rightDist = encoder.getDistance2();
-        float avgDist = (abs(leftDist) + abs(rightDist)) / 2.0;
-        long encoderError = leftCount - rightCount + 8 ;
-        
-        // Get motor speeds
-        int leftSpeed = motorControl.getCurrentSpeedA();
-        int rightSpeed = motorControl.getCurrentSpeedB();
-        
-        // Build output string (no gyro during movement)
-        String output = "L:" + String(leftCount) + 
-                        "|R:" + String(rightCount) + 
-                        "|Err:" + String(encoderError) +
-                        "|L_Speed:" + String(leftSpeed) +
-                        "|R_Speed:" + String(rightSpeed);
-                        
-        
-        // Send to Serial and WiFi
-        wifiMgr.sendDataLn(output);
-        
-        // Check if reached 20cm
-        if (avgDist >= moveDistance) {
-            motorControl.stop();
-            Serial.println("20cm reached");
-            break;
-        }
-        
-        delay(20);
-    }
-    
-    delay(200);
-    
-    // After 20cm: Check yaw alignment
-    updateGyro();
-    float yawError = initialYaw - currentYaw;
-    while (yawError > 180) yawError -= 360;
-    while (yawError < -180) yawError += 360;
-    
-    Serial.print("Current yaw: ");
-    Serial.print(currentYaw);
-    Serial.print(" | Error: ");
-    Serial.println(yawError);
-    
-    if (abs(yawError) > yawTolerance) {
-        Serial.println("Yaw drift detected, correcting...");
-        alignToYaw(initialYaw);
-    }
-    
-    delay(200);
-    
-    // Check for obstacle (pause gyro to avoid I2C conflicts)
-    disableGyroInterrupt();
-    delay(50);
-    enableToF();  // Ensure ToF is powered before reading
-    delay(100);
-    uint16_t distance = tofSensor.getDistance();
-    enableGyroInterrupt();
-    
-    Serial.print("ToF distance: ");
-    Serial.print(distance);
-    Serial.println(" mm");
-    
-    if (distance < 60) {
-        Serial.println("Obstacle detected! Stopping.");
-        motorControl.stop();
-        String output = "OBSTACLE|Dist:" + String(distance) + "mm";
-        wifiMgr.sendDataLn(output);
-        delay(1000);
-        return;  // Stay stopped
-    }
-    
-    delay(500);  // Pause before next move
+    // Test 90° Right Turn (Encoder-based with PID and Gyro feedback)
+    Serial.println("\n\n========== TEST: RIGHT 90° TURN (ENCODER-BASED) ==========");
+    turnEncoderBased(90);  // Positive = right turn
+    delay(2000);
 }
 
 

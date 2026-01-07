@@ -1,173 +1,91 @@
 #include "vl53l0x_v2.h"
 
-// VL53L0XV2 Register definitions
-#define VL53L0X_REG_SYSRANGE_START          0x00
-#define VL53L0X_REG_SYSTEM_THRESH_HIGH      0x0C
-#define VL53L0X_REG_SYSTEM_THRESH_LOW       0x0E
-#define VL53L0X_REG_SYSTEM_SEQUENCE_CONFIG  0x01
-#define VL53L0X_REG_SYSRANGE_MODE_START     0x00
-#define VL53L0X_REG_RESULT_RANGE_STATUS     0x13
-#define VL53L0X_REG_RESULT_CORE_AMBIENT_WINDOW_EVENTS_RTN  0x06
-#define VL53L0X_REG_RESULT_CORE_RANGING_TOTAL_EVENTS_RTN   0x08
-#define VL53L0X_REG_RESULT_CORE_AMBIENT_WINDOW_EVENTS_REF  0x0A
-#define VL53L0X_REG_RESULT_CORE_RANGING_TOTAL_EVENTS_REF   0x0C
-#define VL53L0X_REG_RESULT_PEAK_SIGNAL_RATE_REF            0x0E
-#define VL53L0X_REG_RESULT_RANGE_VAL                       0x14
-#define VL53L0X_REG_RESULT_RANGE_RAW                       0x1A
+// Three ToF sensors using VL53L0X library
+VL53L0X tofSensor[NUM_TOF_SENSORS];
+float tof_distance[NUM_TOF_SENSORS] = {0, 0, 0};
+float tof_filtered[NUM_TOF_SENSORS] = {0, 0, 0};  // Filtered values
+bool tof_initialized[NUM_TOF_SENSORS] = {false, false, false};  // Track if filter is initialized
 
-#define VL53L0X_ADDRESS_DEFAULT             0x29
-#define VL53L0X_WHO_AM_I                    0xC0
-#define VL53L0X_WHO_AM_I_VALUE              0xEE
+// XSHUT pins for each sensor
+const int XSHUT_PINS[NUM_TOF_SENSORS] = {17, 16, 5};  // Front, Right, Left
+const uint8_t I2C_ADDRESSES[NUM_TOF_SENSORS] = {0x30, 0x31, 0x32};  // Custom addresses (not 0x29)
+const float MAX_RANGE = 1200.0f;
+const float CALIBRATION_OFFSET[NUM_TOF_SENSORS] = {0.0f, 0.0f, 0.0f};  // Adjust per sensor
+const float FILTER_ALPHA = 0.3f;  // Filter coefficient (0.1-0.5, lower = smoother)
 
-VL53L0XV2::VL53L0XV2(uint8_t xshutPin)
-    : _address(VL53L0X_ADDRESS_DEFAULT), _xshutPin(xshutPin), _initialized(false) {
-}
 
-bool VL53L0XV2::begin(uint8_t address) {
-    _address = address;
+void setupToF() {
+    Serial.println("Initializing ToF sensors...");
     
-    // Initialize XSHUT pin
-    pinMode(_xshutPin, OUTPUT);
-    digitalWrite(_xshutPin, LOW);
-    delay(100);
-    digitalWrite(_xshutPin, HIGH);
-    delay(100);
-    
-    // Note: Wire.begin() should be called in main setup before this
-    
-    // Check WHO_AM_I register
-    uint8_t whoami = readReg(VL53L0X_WHO_AM_I);
-    if (whoami != VL53L0X_WHO_AM_I_VALUE) {
-        return false;
+    // Pull all XSHUT pins low first
+    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        pinMode(XSHUT_PINS[i], OUTPUT);
+        digitalWrite(XSHUT_PINS[i], LOW);
     }
+    delay(20);
     
-    // Initialize sensor with default settings
-    writeReg(VL53L0X_REG_SYSRANGE_START, 0x00);
-    
-    _initialized = true;
-    return true;
-}
-
-uint16_t VL53L0XV2::getDistance() {
-    if (!_initialized) {
-        return 0;
-    }
-    
-    // Start single ranging measurement
-    writeReg(0x00, 0x01);
-    
-    // Wait for measurement to complete (check bit 0 of register 0x13)
-    uint8_t status;
-    int timeout = 0;
-    do {
-        status = readReg(0x13);
-        delay(1);
-        timeout++;
-        if (timeout > 100) {
-            return 8191; // Return max range on timeout
-        }
-    } while ((status & 0x01) == 0);
-    
-    // Read distance value from register 0x1E (RESULT_RANGE_VAL in mm)
-    uint16_t distance = readReg16(0x1E);
-    
-    // Clear interrupt
-    writeReg(0x0B, 0x01);
-    
-    return distance;
-}
-
-bool VL53L0XV2::readRaw(uint8_t *data, size_t length) {
-    if (!_initialized || !data || length == 0) {
-        return false;
-    }
-    
-    Wire.beginTransmission(_address);
-    Wire.write(VL53L0X_REG_RESULT_RANGE_STATUS);
-    Wire.endTransmission();
-    
-    Wire.requestFrom(_address, (uint8_t)length);
-    
-    for (size_t i = 0; i < length; i++) {
-        if (Wire.available()) {
-            data[i] = Wire.read();
+    // Initialize each sensor one by one
+    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        // Enable this sensor
+        digitalWrite(XSHUT_PINS[i], HIGH);
+        delay(20);
+        
+        // Initialize sensor
+        if (!tofSensor[i].init()) {
+            Serial.print("ToF Error ");
+            Serial.println(i + 1);
         } else {
-            return false;
+            Serial.print("ToF Sensor initialized ");
+            Serial.println(i + 1);
         }
+        
+        // Set custom address immediately
+        tofSensor[i].setAddress(I2C_ADDRESSES[i]);
+        tofSensor[i].setMeasurementTimingBudget(20000);
+        tofSensor[i].startContinuous();
     }
     
-    return true;
+    Serial.println("All ToF sensors ready");
 }
 
-void VL53L0XV2::setAddress(uint8_t address) {
-    _address = address;
-}
 
-uint8_t VL53L0XV2::getAddress() {
-    return _address;
-}
-
-bool VL53L0XV2::startRanging() {
-    if (!_initialized) {
-        return false;
-    }
-    
-    writeReg(VL53L0X_REG_SYSRANGE_START, 0x01);
-    return true;
-}
-
-void VL53L0XV2::stopRanging() {
-    writeReg(VL53L0X_REG_SYSRANGE_START, 0x00);
-}
-
-bool VL53L0XV2::isDataReady() {
-    uint8_t status = readReg(VL53L0X_REG_RESULT_RANGE_STATUS);
-    return (status & 0x01) == 0;
-}
-
-uint8_t VL53L0XV2::readReg(uint8_t reg) {
-    Wire.beginTransmission(_address);
-    Wire.write(reg);
-    Wire.endTransmission();
-    
-    Wire.requestFrom(_address, (uint8_t)1);
-    
-    if (Wire.available()) {
-        return Wire.read();
-    }
-    
-    return 0;
-}
-
-void VL53L0XV2::writeReg(uint8_t reg, uint8_t value) {
-    Wire.beginTransmission(_address);
-    Wire.write(reg);
-    Wire.write(value);
-    Wire.endTransmission();
-}
-
-uint16_t VL53L0XV2::readReg16(uint8_t reg) {
-    Wire.beginTransmission(_address);
-    Wire.write(reg);
-    Wire.endTransmission();
-    
-    Wire.requestFrom(_address, (uint8_t)2);
-    
-    uint16_t value = 0;
-    if (Wire.available()) {
-        value = (Wire.read() << 8);
-        if (Wire.available()) {
-            value |= Wire.read();
+void readToF() {
+    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        float distance = tofSensor[i].readRangeContinuousMillimeters();
+        
+        // Check for timeout or out of range
+        if (tofSensor[i].timeoutOccurred() || distance == 0) {
+            // Skip this reading, keep previous filtered value
+            continue;
         }
+        else if (distance >= 1200.0f) {
+            distance = MAX_RANGE;
+        }
+        else {
+            distance = distance - CALIBRATION_OFFSET[i];
+            if (distance < 0) distance = 0;
+        }
+        
+        // Apply exponential moving average filter
+        if (!tof_initialized[i]) {
+            // First valid reading, initialize filter
+            tof_filtered[i] = distance;
+            tof_initialized[i] = true;
+        } else {
+            // EMA: filtered = alpha * new + (1 - alpha) * previous
+            tof_filtered[i] = FILTER_ALPHA * distance + (1.0f - FILTER_ALPHA) * tof_filtered[i];
+        }
+        
+        // Update output with filtered value
+        tof_distance[i] = tof_filtered[i];
     }
-    
-    return value;
 }
 
-void VL53L0XV2::writeReg16(uint8_t reg, uint16_t value) {
-    Wire.beginTransmission(_address);
-    Wire.write(reg);
-    Wire.write((value >> 8) & 0xFF);
-    Wire.write(value & 0xFF);
-    Wire.endTransmission();
+
+void flushToF() {
+    // Clear the sensor buffer by reading multiple times
+    for (int i = 0; i < 10; i++) {
+        readToF();
+        delay(5);
+    }
 }
