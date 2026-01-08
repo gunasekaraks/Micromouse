@@ -13,6 +13,7 @@ private:
     const char* password;
     
 public:
+    WiFiManager();
     WiFiManager(const char* wifi_ssid, const char* wifi_password, int port = 8888);
     
     bool begin();

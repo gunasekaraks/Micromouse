@@ -1,5 +1,15 @@
 #include "wifi_manager.h"
 
+namespace {
+// Default WiFi credentials (keep centralized here)
+constexpr const char* kDefaultSsid = "Amiru";
+constexpr const char* kDefaultPassword = "amiru123";
+}
+
+WiFiManager::WiFiManager()
+    : WiFiManager(kDefaultSsid, kDefaultPassword, 8888) {
+}
+
 WiFiManager::WiFiManager(const char* wifi_ssid, const char* wifi_password, int port)
     : server(port), ssid(wifi_ssid), password(wifi_password) {
 }

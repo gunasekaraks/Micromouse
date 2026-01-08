@@ -6,7 +6,7 @@ MotorControl::MotorControl(int ain1, int ain2, int bin1, int bin2, int stby)
       pwmFrequency(20000), pwmResolution(8),
     currentSpeedA(0), currentSpeedB(0), maxSpeed(255),
     speedBiasA(0), speedBiasB(0),
-      kp(1.0), ki(0.0), kd(0.5),
+      kp(2.75), ki(0.00005), kd(0.0007),
       previousError(0.0), integralError(0.0),
       encoder(nullptr), isMoving(false),
       targetDistance(0.0), startLeftDistance(0.0), startRightDistance(0.0)

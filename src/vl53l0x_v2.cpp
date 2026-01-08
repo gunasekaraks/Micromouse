@@ -5,16 +5,43 @@ VL53L0X tofSensor[NUM_TOF_SENSORS];
 float tof_distance[NUM_TOF_SENSORS] = {0, 0, 0};
 float tof_filtered[NUM_TOF_SENSORS] = {0, 0, 0};  // Filtered values
 bool tof_initialized[NUM_TOF_SENSORS] = {false, false, false};  // Track if filter is initialized
+bool tof_ready[NUM_TOF_SENSORS] = {false, false, false};
+
+// Robust filtering configuration
+static constexpr int MEDIAN_WINDOW = 5;           // small window for embedded
+static constexpr float OUTLIER_JUMP_MM = 150.0f;  // reject sudden spikes beyond this
+// Ring buffers for median
+static float raw_buf[NUM_TOF_SENSORS][MEDIAN_WINDOW] = {};
+static uint8_t raw_count[NUM_TOF_SENSORS] = {0, 0, 0};
+static uint8_t raw_idx[NUM_TOF_SENSORS] = {0, 0, 0};
 
 // XSHUT pins for each sensor
 const int XSHUT_PINS[NUM_TOF_SENSORS] = {17, 16, 5};  // Front, Right, Left
 const uint8_t I2C_ADDRESSES[NUM_TOF_SENSORS] = {0x30, 0x31, 0x32};  // Custom addresses (not 0x29)
 const float MAX_RANGE = 1200.0f;
-const float CALIBRATION_OFFSET[NUM_TOF_SENSORS] = {0.0f, 0.0f, 0.0f};  // Adjust per sensor
-const float FILTER_ALPHA = 0.3f;  // Filter coefficient (0.1-0.5, lower = smoother)
+const float CALIBRATION_OFFSET[NUM_TOF_SENSORS] = {16.0f, 7.0f, 57.0f};  // Adjust per sensor
+const float FILTER_ALPHA = 0.25f;  // EMA on median (lower = smoother)
+
+static float median_of(float* arr, int n)
+{
+    // insertion sort into local buffer, n <= MEDIAN_WINDOW
+    float tmp[MEDIAN_WINDOW];
+    for (int i = 0; i < n; ++i) tmp[i] = arr[i];
+    for (int i = 1; i < n; ++i) {
+        float key = tmp[i];
+        int j = i - 1;
+        while (j >= 0 && tmp[j] > key) {
+            tmp[j + 1] = tmp[j];
+            --j;
+        }
+        tmp[j + 1] = key;
+    }
+    if (n % 2 == 1) return tmp[n/2];
+    return 0.5f * (tmp[n/2 - 1] + tmp[n/2]);
+}
 
 
-void setupToF() {
+bool setupToF() {
     Serial.println("Initializing ToF sensors...");
     
     // Pull all XSHUT pins low first
@@ -34,23 +61,36 @@ void setupToF() {
         if (!tofSensor[i].init()) {
             Serial.print("ToF Error ");
             Serial.println(i + 1);
+            tof_ready[i] = false;
+            continue;
         } else {
             Serial.print("ToF Sensor initialized ");
             Serial.println(i + 1);
+            tof_ready[i] = true;
         }
         
         // Set custom address immediately
         tofSensor[i].setAddress(I2C_ADDRESSES[i]);
-        tofSensor[i].setMeasurementTimingBudget(20000);
+        // Longer budget -> better accuracy (we read every ~200ms in loop)
+        tofSensor[i].setMeasurementTimingBudget(50000);
         tofSensor[i].startContinuous();
     }
     
-    Serial.println("All ToF sensors ready");
+    Serial.println("ToF init complete");
+    bool anyReady = false;
+    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        anyReady |= tof_ready[i];
+    }
+    return anyReady;
 }
 
 
-void readToF() {
+bool readToF() {
+    bool anyValid = false;
     for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        if (!tof_ready[i]) {
+            continue;
+        }
         float distance = tofSensor[i].readRangeContinuousMillimeters();
         
         // Check for timeout or out of range
@@ -66,19 +106,41 @@ void readToF() {
             if (distance < 0) distance = 0;
         }
         
-        // Apply exponential moving average filter
+        // Update ring buffer
+        raw_buf[i][raw_idx[i]] = distance;
+        raw_idx[i] = (raw_idx[i] + 1) % MEDIAN_WINDOW;
+        if (raw_count[i] < MEDIAN_WINDOW) raw_count[i]++;
+
+        // Build linear window for median
+        float window[MEDIAN_WINDOW];
+        int n = raw_count[i];
+        for (int k = 0; k < n; ++k) {
+            int pos = (raw_idx[i] + MEDIAN_WINDOW - n + k) % MEDIAN_WINDOW;
+            window[k] = raw_buf[i][pos];
+        }
+        float med = median_of(window, n);
+
+        // Outlier rejection relative to filtered value
+        if (tof_initialized[i]) {
+            float delta = med - tof_filtered[i];
+            if (delta > OUTLIER_JUMP_MM) med = tof_filtered[i] + OUTLIER_JUMP_MM;
+            else if (delta < -OUTLIER_JUMP_MM) med = tof_filtered[i] - OUTLIER_JUMP_MM;
+        }
+
+        // EMA on median
         if (!tof_initialized[i]) {
-            // First valid reading, initialize filter
-            tof_filtered[i] = distance;
+            tof_filtered[i] = med;
             tof_initialized[i] = true;
         } else {
-            // EMA: filtered = alpha * new + (1 - alpha) * previous
-            tof_filtered[i] = FILTER_ALPHA * distance + (1.0f - FILTER_ALPHA) * tof_filtered[i];
+            tof_filtered[i] = FILTER_ALPHA * med + (1.0f - FILTER_ALPHA) * tof_filtered[i];
         }
         
         // Update output with filtered value
         tof_distance[i] = tof_filtered[i];
+        anyValid = true;
     }
+
+    return anyValid;
 }
 
 

@@ -1,175 +1,160 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include "wifi_manager.h"
+#include "vl53l0x_v2.h"
 #include "encoder.h"
 #include "motor_control.h"
-#include "wifi_manager.h"
 #include "gyro.h"
-#include "vl53l0x_v2.h"
+#include "search_run.h"
 #include "turn.h"
 
-// WiFi Manager
-WiFiManager wifiMgr("slt ftth", "71091044");
+// Set to 1 to run a simple 90° turn test instead of the search run
+#define RUN_TURN_TEST 1
 
-// Encoder instance
-Encoder encoder(35, 34, 19, 26, 0.034 * 3.14159, 357, 357);
+// Global instances (needed by turn.cpp as well)
+WiFiManager wifiMgr;
 
-// Motor control instance
+// Wheel configuration
+static constexpr float wheelDiameterMeters = 0.034f;
+static constexpr float wheelCircumferenceMeters = wheelDiameterMeters * 3.14159f;
+
+// Encoder and motor control
+Encoder encoder(35, 34, 19, 26, wheelCircumferenceMeters, 357, 357);
 MotorControl motorControl(25, 13, 14, 18, 32);
 
-// ToF sensor is declared in vl53l0x_v2.cpp
+// Simple turn test: execute a right 90°, pause, then a left 90°
+static void runTurnTest()
+{
+    Serial.println("\n=== TURN TEST MODE ===");
+    wifiMgr.sendDataLn("TURN_TEST|Starting");
 
-// Parameters
-int baseSpeed = 160;
-float initialYaw = 0.0;
-float yawTolerance = 1;  // degrees
-const float moveDistance = 0.20;  // 20cm in meters
-unsigned long lastTofReadTime = 0;  // Track when we last read ToF
+    // Ensure encoders start from zero
+    encoder.reset(true);
 
-// Forward declarations
-void disableGyroInterrupt();
-void enableGyroInterrupt();
-void alignToYaw(float targetYaw);
+    delay(500);
+    Serial.println("Right 90° turn...");
+    bool ok = turnRight90();
+    Serial.println(ok ? "Right turn complete" : "Right turn failed");
+    wifiMgr.sendDataLn(ok ? "TURN_TEST|Right90|OK" : "TURN_TEST|Right90|FAIL");
+
+    delay(1500);
+
+    Serial.println("Left 90° turn (return to heading)...");
+    ok = turnLeft90();
+    Serial.println(ok ? "Left turn complete" : "Left turn failed");
+    wifiMgr.sendDataLn(ok ? "TURN_TEST|Left90|OK" : "TURN_TEST|Left90|FAIL");
+
+    Serial.println("=== TURN TEST DONE ===");
+    wifiMgr.sendDataLn("TURN_TEST|Done");
+}
 
 void setup()
 {
     Serial.begin(115200);
-    delay(1000);
+    delay(200);
 
-    Serial.println("\n=== Micromouse Navigation with Gyro & ToF ===");
-    Serial.println("Waiting for gyro stabilization...");
-    Serial.println("============================================\n");
-
-    // Initialize WiFi
-    if (!wifiMgr.begin()) {
-        Serial.println("Warning: WiFi not connected, continuing with Serial only\n");
-    }
-
-    // Initialize I2C
-    Wire.begin();
-    
-    // Initialize and stabilize gyro
-    setupGyro();
-    if (!gyro_ok) {
-        Serial.println("ERROR: Gyro initialization failed!");
-        while(1) { delay(1000); }  // Halt
-    }
-    
-    Serial.println("Gyro initializing, waiting for stable readings...");
-    float lastYaw = 0;
-    int stableCount = 0;
-    while (stableCount < 20) {
-        if (updateGyro()) {
-            float yawDiff = abs(currentYaw - lastYaw);
-            Serial.print("Yaw: ");
-            Serial.print(currentYaw);
-            Serial.print(" | Diff: ");
-            Serial.print(yawDiff);
-            Serial.print(" | Stable count: ");
-            Serial.println(stableCount);
-            
-            if (yawDiff < 0.005) {
-                stableCount++;
-            } else {
-                stableCount = 0;
-            }
-            lastYaw = currentYaw;
-        }
-        delay(20);
-    }
-    
-    // Store initial yaw
-    initialYaw = currentYaw;
-    Serial.print("Initial yaw: ");
-    Serial.println(initialYaw);
-    
-    // Give I2C bus time to settle
-    delay(500);
-    
-    // Initialize ToF sensor (disable gyro interrupt first)
-    disableGyroInterrupt();
-    delay(100);
-    
-    setupToF();
-    enableGyroInterrupt();
-    
-    // Flush ToF readings for 1 second
-    Serial.println("Flushing ToF sensor...");
-    disableGyroInterrupt();
-    flushToF();
-    enableGyroInterrupt();
-    
-    Serial.println("ToF sensor ready\n");
-
-    // Initialize encoders and motors
+    // Basic init required for both turn test and search
+    wifiMgr.begin();
     encoder.begin();
     motorControl.begin(&encoder);
-    motorControl.setPIDCoefficients(2.5, 0.0005, 0.00005);  // PID tuned for pulse counts
-    
-    delay(1000);
-    Serial.println("Starting navigation...\n");
-}
+    motorControl.setPIDCoefficients(2.5f, 0.0005f, 0.00005f);
 
-void disableGyroInterrupt() {
-    detachInterrupt(digitalPinToInterrupt(33));  // Detach from interrupt pin
-}
-
-void enableGyroInterrupt() {
-    attachInterrupt(digitalPinToInterrupt(33), dmpDataReady, RISING);  // Re-attach interrupt
-}
-
-void alignToYaw(float targetYaw) {
-    Serial.print("Aligning to yaw: ");
-    Serial.println(targetYaw);
-    
-    updateGyro();
-    float yawError = targetYaw - currentYaw;
-    
-    // Normalize error to [-180, 180]
-    while (yawError > 180) yawError -= 360;
-    while (yawError < -180) yawError += 360;
-    
-    if (abs(yawError) < yawTolerance) {
-        Serial.println("Already aligned");
-        return;
+#if RUN_TURN_TEST
+    // Exercise the turn routine with PWM initialized
+    runTurnTest();
+    Serial.println("Hold here after turn test.");
+    while (1) {
+        wifiMgr.update();
+        delay(500);
     }
-    
-    // Turn until aligned
-    int turnSpeed = 160;
-    while (abs(yawError) > yawTolerance) {
-        updateGyro();
-        yawError = targetYaw - currentYaw;
-        while (yawError > 180) yawError -= 360;
-        while (yawError < -180) yawError += 360;
-        
-        if (yawError > 0) {
-            // Turn left (CCW)
-            motorControl.setMotorASpeed(turnSpeed);
-            motorControl.setMotorBSpeed(-turnSpeed);
-        } else {
-            // Turn right (CW)
-            motorControl.setMotorASpeed(-turnSpeed);
-            motorControl.setMotorBSpeed(turnSpeed);
-        }
-        
-        String output = "Yaw_:" + String(currentYaw) + "|Target:" + String(targetYaw) + "|Err:" + String(yawError);
-        wifiMgr.sendDataLn(output);
-        delay(20);
+#endif
+
+    // Initialize ToF sensors
+    Serial.println("Initializing ToF sensors...");
+    bool tofOk = setupToF();
+    if (!tofOk) {
+        Serial.println("ERROR: No ToF sensors initialized; halting.");
+        while (1) { delay(1000); }
     }
+    flushToF();
+    Serial.println("ToF sensors initialized.");
     
-    motorControl.stop();
+    // Verify all ToF sensors are reading
+    Serial.println("Verifying ToF sensors...");
     delay(200);
-    Serial.println("Alignment complete");
+    bool tofReadOk = readToF();
+    if (!tofReadOk) {
+        Serial.println("ERROR: ToF sensors not responding!");
+        while (1) { delay(1000); }
+    }
+    
+    // Check individual sensors
+    Serial.println("ToF Readings:");
+    Serial.print("  Front: ");
+    Serial.print(tof_distance[TOF_FRONT]);
+    Serial.print(" mm ");
+    if (tof_ready[TOF_FRONT]) Serial.println("✓");
+    else Serial.println("✗ NOT READY");
+    
+    Serial.print("  Right: ");
+    Serial.print(tof_distance[TOF_RIGHT]);
+    Serial.print(" mm ");
+    if (tof_ready[TOF_RIGHT]) Serial.println("✓");
+    else Serial.println("✗ NOT READY");
+    
+    Serial.print("  Left:  ");
+    Serial.print(tof_distance[TOF_LEFT]);
+    Serial.print(" mm ");
+    if (tof_ready[TOF_LEFT]) Serial.println("✓");
+    else Serial.println("✗ NOT READY");
+    
+    // Check if all sensors are ready
+    int readySensors = 0;
+    if (tof_ready[TOF_FRONT]) readySensors++;
+    if (tof_ready[TOF_RIGHT]) readySensors++;
+    if (tof_ready[TOF_LEFT]) readySensors++;
+    
+    Serial.print("Ready sensors: ");
+    Serial.print(readySensors);
+    Serial.println("/3");
+    
+    if (readySensors < 3) {
+        Serial.println("WARNING: Not all ToF sensors are ready!");
+        Serial.println("Continuing anyway, but wall detection may be affected.");
+        delay(2000);
+    } else {
+        Serial.println("✓ All ToF sensors verified and working");
+    }
+
+    delay(1000);
+
+    // Initialize search run
+    Serial.println("Starting flood fill search run...");
+    // IMPORTANT: Always start at center of grid (7,7) regardless of physical corner
+    // This allows exploration in all 4 directions without hitting artificial grid boundaries
+    // Physical maze walls will constrain movement, not grid bounds
+    // Direction can be adjusted based on initial orientation:
+    // - North if facing into maze from bottom corner
+    // - East if facing into maze from left corner  
+    // - South if facing into maze from top corner
+    // - West if facing into maze from right corner
+    SearchRun::begin(&wifiMgr, &encoder, &motorControl, 7, 7, SearchRun::NORTH);
+
 }
 
 void loop()
 {
-    // Update WiFi connections
-    wifiMgr.update();
+    // Run the search once
+    SearchRun::run();
+
+    // After reaching center, stop
+    Serial.println("\n=== SEARCH COMPLETE ===");
+    Serial.println("Robot has reached the center. Halting.");
     
-    // Test 90° Right Turn (Encoder-based with PID and Gyro feedback)
-    Serial.println("\n\n========== TEST: RIGHT 90° TURN (ENCODER-BASED) ==========");
-    turnEncoderBased(90);  // Positive = right turn
-    delay(2000);
+    while (1) {
+        wifiMgr.update();
+        delay(1000);
+    }
 }
 
 

@@ -13,12 +13,13 @@
 
 extern VL53L0X tofSensor[NUM_TOF_SENSORS];
 extern float tof_distance[NUM_TOF_SENSORS];
+extern bool tof_ready[NUM_TOF_SENSORS];
 
 // Initialize ToF sensors
-void setupToF();
+bool setupToF();
 
 // Read all ToF sensors
-void readToF();
+bool readToF();
 
 // Flush ToF readings
 void flushToF();

@@ -1,7 +1,6 @@
 #include "turn.h"
 #include "motor_control.h"
 #include "encoder.h"
-#include "gyro.h"
 #include "wifi_manager.h"
 
 // External references
@@ -10,11 +9,9 @@ extern Encoder encoder;
 extern WiFiManager wifiMgr;
 
 // Turn parameters
-const int TURN_SPEED = 255;              // Maximum speed for turning (lowered to reduce jerk)
-const float YAW_TOLERANCE = 1.5;         // Acceptable yaw error in degrees
+const int TURN_SPEED = 220;              // Maximum speed for turning (lowered to reduce jerk)
 const unsigned long TURN_TIMEOUT = 8000; // Maximum time for turn (ms)
-const float KP_TURN = 2.0;               // Proportional gain for turn control (reduced for smoothness)
-const int MIN_TURN_SPEED = 200;          // Raise minimum to avoid stalling mid-turn
+const int MIN_TURN_SPEED = 170;          // Raise minimum to avoid stalling mid-turn
 
 // Encoder-based turn parameters
 const float WHEEL_DISTANCE = 8.0;        // Distance between wheels in cm
@@ -25,132 +22,32 @@ const float CM_PER_PULSE = (WHEEL_CIRCUMFERENCE * 100) / PULSES_PER_ROTATION;  /
 const int DECEL_PULSES = 50;               // Start decelerating within this many pulses remaining
 
 // PID for encoder-based turn (encoder only, no gyro in control loop)
-const float KP_ENCODER = 1.5;
-const float KI_ENCODER = 0.1;
+const float KP_ENCODER = 2.0;
+const float KI_ENCODER = 0.01;
 const float KD_ENCODER = 0.4;
 
 // PID variables
 float encoderIntegral = 0;
 float lastEncoderError = 0;
 
+// Gyro-free wrapper: reuse encoder-based turn for arbitrary angle
 bool turn(float angle) {
-    // Get current yaw as starting point
-    updateGyro();
-    float startYaw = currentYaw;
-    // Positive angle = right/CW, so subtract to move CW in a CCW-positive yaw frame
-    float targetYaw = startYaw - angle;
-    
-    // Normalize target yaw to [-180, 180]
-    while (targetYaw > 180) targetYaw -= 360;
-    while (targetYaw < -180) targetYaw += 360;
-    
-    Serial.print("Turning from ");
-    Serial.print(startYaw);
-    Serial.print(" to ");
-    Serial.print(targetYaw);
-    Serial.print(" (");
-    Serial.print(angle);
-    Serial.println(" degrees)");
-    
-    // Reset encoder
-    encoder.reset(true);
-    
-    unsigned long startTime = millis();
-    float commandedSpeed = 0;  // Smoothed speed command to avoid sudden jerks
-    bool success = false;
-    
-    while (millis() - startTime < TURN_TIMEOUT) {
-        // Update WiFi
-        wifiMgr.update();
-        
-        // Update gyro
-        updateGyro();
-        
-        // Calculate yaw error
-        float yawError = targetYaw - currentYaw;
-        
-        // Normalize error to [-180, 180]
-        while (yawError > 180) yawError -= 360;
-        while (yawError < -180) yawError += 360;
-        
-        // Check if we've reached the target
-        if (abs(yawError) < YAW_TOLERANCE) {
-            motorControl.stop();
-            success = true;
-            Serial.print("Turn complete! Final yaw: ");
-            Serial.println(currentYaw);
-            break;
-        }
-        
-        // Calculate turn speed with proportional control
-        float speedAdjust = KP_TURN * yawError;
-        
-        // Ensure minimum speed to overcome friction
-        if (speedAdjust > 0 && speedAdjust < MIN_TURN_SPEED) speedAdjust = MIN_TURN_SPEED;
-        if (speedAdjust < 0 && speedAdjust > -MIN_TURN_SPEED) speedAdjust = -MIN_TURN_SPEED;
-        
-        // Limit maximum speed
-        if (speedAdjust > TURN_SPEED) speedAdjust = TURN_SPEED;
-        if (speedAdjust < -TURN_SPEED) speedAdjust = -TURN_SPEED;
-        
-        // Apply dead zone for small errors (slow down near target)
-        if (abs(yawError) < 10) {
-            speedAdjust *= 0.6;  // Reduce speed near target for precision
-        }
-        
-        // Smooth acceleration to reduce jerk
-        float maxDeltaGyro = 16;  // allow slightly faster ramp to avoid stall
-        float deltaGyro = speedAdjust - commandedSpeed;
-        if (deltaGyro > maxDeltaGyro) deltaGyro = maxDeltaGyro;
-        if (deltaGyro < -maxDeltaGyro) deltaGyro = -maxDeltaGyro;
-        commandedSpeed += deltaGyro;
-        
-        // Apply turn (positive error = turn left/CCW, negative = turn right/CW)
-        if (yawError > 0) {
-            // Turn left (CCW) - Left backward, Right forward
-            motorControl.setMotorASpeed(-(int)commandedSpeed);
-            motorControl.setMotorBSpeed((int)commandedSpeed);
-        } else {
-            // Turn right (CW) - Left forward, Right backward
-            motorControl.setMotorASpeed((int)commandedSpeed);
-            motorControl.setMotorBSpeed(-(int)commandedSpeed);
-        }
-        
-        // Log progress
-        String output = "Turn|Yaw:" + String(currentYaw, 2) + 
-                        "|Target:" + String(targetYaw, 2) + 
-                        "|Err:" + String(yawError, 2) +
-                        "|Speed:" + String((int)commandedSpeed);
-        wifiMgr.sendDataLn(output);
-        
-        delay(20);
-    }
-    
-    // Ensure motors are stopped
-    motorControl.stop();
-    delay(200);
-    
-    if (!success) {
-        Serial.println("Turn timeout!");
-        return false;
-    }
-    
-    return true;
+    return turnEncoderBased(angle);
 }
 
 bool turnRight90() {
-    Serial.println("=== Turning Right 90° ===");
-    return turn(TURN_RIGHT);
+    Serial.println("=== Turning Right 90° (encoder only) ===");
+    return turnEncoderBased(TURN_RIGHT);
 }
 
 bool turnLeft90() {
     Serial.println("=== Turning Left 90° ===");
-    return turn(TURN_LEFT);
+    return turnEncoderBased(TURN_LEFT);
 }
 
 bool turn180() {
     Serial.println("=== Turning 180° ===");
-    return turn(TURN_180);
+    return turnEncoderBased(TURN_180);
 }
 
 // Encoder-based turn with PID and gyro feedback
