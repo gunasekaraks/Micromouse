@@ -17,7 +17,7 @@ static const float CELL_METERS = 0.18f;    // 18 cm cells
 // ToF wall thresholds
 static const float FRONT_THRESH_MM = 90.0f; // front wall threshold = 9 cm (18 cm cell)
 static const float SIDE_THRESH_MM  = 90.0f; // left/right wall threshold ≈5 cm (16.8 cm corridor, 7.5 cm sensor gap)
-static const int BASE_SPEED = 165;         // base forward speed matching moveforward.cpp
+static const int BASE_SPEED = 170;         // base forward speed matching moveforward.cpp
 
 // Maze representation: walls per cell (N,E,S,W bits)
 static uint8_t walls[SIZE][SIZE];   // bit0=N, bit1=E, bit2=S, bit3=W; 1=wall known, 0=open/unknown

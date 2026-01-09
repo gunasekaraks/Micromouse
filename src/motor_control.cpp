@@ -213,7 +213,7 @@ void MotorControl::updateStraightLineControl()
     long rightCount = encoder->getPulseCount2();
 
     // Calculate error (difference between left and right pulse counts)
-    float error = leftCount - rightCount + 8  ;
+    float error = leftCount - rightCount + 0  ;
 
     // PID calculation
     integralError += error;
@@ -396,4 +396,37 @@ bool MotorControl::isMovingForward() const
 float MotorControl::getTargetDistance() const
 {
     return targetDistance;
+}
+void MotorControl::setSpeedBias(int biasA, int biasB)
+{
+    speedBiasA = biasA;
+    speedBiasB = biasB;
+    Serial.print("Speed bias set - Left: ");
+    Serial.print(biasA);
+    Serial.print(" | Right: ");
+    Serial.println(biasB);
+}
+
+void MotorControl::setLeftMotorBias(int bias)
+{
+    speedBiasA = bias;
+    Serial.print("Left motor bias set to: ");
+    Serial.println(bias);
+}
+
+void MotorControl::setRightMotorBias(int bias)
+{
+    speedBiasB = bias;
+    Serial.print("Right motor bias set to: ");
+    Serial.println(bias);
+}
+
+int MotorControl::getLeftMotorBias() const
+{
+    return speedBiasA;
+}
+
+int MotorControl::getRightMotorBias() const
+{
+    return speedBiasB;
 }

@@ -78,6 +78,13 @@ public:
     void setMotorASpeed(int speed);  // -255 to 255
     void setMotorBSpeed(int speed);  // -255 to 255
 
+    // Speed bias adjustment for mechanical alignment correction
+    void setSpeedBias(int biasA, int biasB);
+    void setLeftMotorBias(int bias);    // Adjust left motor bias
+    void setRightMotorBias(int bias);   // Adjust right motor bias
+    int getLeftMotorBias() const;
+    int getRightMotorBias() const;
+
 private:
     // Internal motor control
     void setMotorSpeed(int speedA, int speedB);
