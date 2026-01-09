@@ -9,7 +9,7 @@
 #include "turn.h"
 
 // Set to 1 to run a simple 90° turn test instead of the search run
-#define RUN_TURN_TEST 1
+#define RUN_TURN_TEST 0
 
 // Global instances (needed by turn.cpp as well)
 WiFiManager wifiMgr;
@@ -53,11 +53,60 @@ void setup()
     Serial.begin(115200);
     delay(200);
 
+    // Initialize I2C bus early (required for gyro and ToF sensors)
+    Wire.begin(21, 22);
+    Wire.setClock(400000);
+
     // Basic init required for both turn test and search
     wifiMgr.begin();
     encoder.begin();
     motorControl.begin(&encoder);
     motorControl.setPIDCoefficients(2.5f, 0.0005f, 0.00005f);
+
+    // Initialize and stabilize gyro
+    Serial.println("Initializing gyro...");
+    setupGyro();
+    if (!gyro_ok) {
+        Serial.println("ERROR: Gyro initialization failed!");
+        while (1) { delay(1000); }
+    }
+
+    Serial.println("Waiting for gyro to stabilize...");
+    float lastYaw = 0.0f;
+    int stableCount = 0;
+    while (stableCount < 20) {
+        if (updateGyro()) {
+            float yawDiff = abs(currentYaw - lastYaw);
+            Serial.print("Yaw: ");
+            Serial.print(currentYaw);
+            Serial.print(" | Diff: ");
+            Serial.print(yawDiff);
+            Serial.print(" | Stable: ");
+            Serial.println(stableCount);
+
+            if (yawDiff < 0.005f) {
+                stableCount++;
+            } else {
+                stableCount = 0;
+            }
+            lastYaw = currentYaw;
+        }
+        delay(20);
+    }
+    Serial.println("Gyro stabilized.");
+    Serial.print("Final gyro check - Yaw: ");
+    Serial.print(currentYaw);
+    Serial.println(" deg");
+    if (!gyro_ok) {
+        Serial.println("ERROR: Gyro not responding!");
+        while (1) { delay(1000); }
+    }
+    Serial.println("✓ Gyro verified and working");
+    
+    // Set robot's starting yaw for cardinal heading alignment in turns
+    setRobotStartingYaw(currentYaw);
+
+    delay(500);
 
 #if RUN_TURN_TEST
     // Exercise the turn routine with PWM initialized

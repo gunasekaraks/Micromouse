@@ -19,7 +19,7 @@ static uint8_t raw_idx[NUM_TOF_SENSORS] = {0, 0, 0};
 const int XSHUT_PINS[NUM_TOF_SENSORS] = {17, 16, 5};  // Front, Right, Left
 const uint8_t I2C_ADDRESSES[NUM_TOF_SENSORS] = {0x30, 0x31, 0x32};  // Custom addresses (not 0x29)
 const float MAX_RANGE = 1200.0f;
-const float CALIBRATION_OFFSET[NUM_TOF_SENSORS] = {16.0f, 7.0f, 57.0f};  // Adjust per sensor
+const float CALIBRATION_OFFSET[NUM_TOF_SENSORS] = {16.0f, 7.0f, 44.0f};  // Front, Right, Left
 const float FILTER_ALPHA = 0.25f;  // EMA on median (lower = smoother)
 
 static float median_of(float* arr, int n)

@@ -2,33 +2,48 @@
 #include "motor_control.h"
 #include "encoder.h"
 #include "wifi_manager.h"
+#include "gyro.h"
 
 // External references
 extern MotorControl motorControl;
 extern Encoder encoder;
 extern WiFiManager wifiMgr;
 
+// Robot starting yaw for cardinal heading alignment
+// Should be set via setRobotStartingYaw() after gyro stabilizes
+static float robotStartingYaw = 0.0f;
+static bool startingYawSet = false;
+
+// Set the robot's starting yaw (call after gyro stabilization)
+void setRobotStartingYaw(float yaw) {
+    robotStartingYaw = yaw;
+    startingYawSet = true;
+    Serial.print("Robot starting yaw set to: ");
+    Serial.println(robotStartingYaw);
+}
+
 // Turn parameters
-const int TURN_SPEED = 220;              // Maximum speed for turning (lowered to reduce jerk)
-const unsigned long TURN_TIMEOUT = 8000; // Maximum time for turn (ms)
+const int TURN_SPEED = 210;              // Maximum speed for turning (lowered to reduce jerk)
+const unsigned long TURN_TIMEOUT = 10000; // Maximum time for turn (ms)
 const int MIN_TURN_SPEED = 170;          // Raise minimum to avoid stalling mid-turn
 
 // Encoder-based turn parameters
 const float WHEEL_DISTANCE = 8.0;        // Distance between wheels in cm
-const float WHEEL_DIAMETER = 0.034;      // Wheel diameter in meters (34 mm)
+const float WHEEL_DIAMETER = 0.034;      // Wheel diameter in meters (44 mm)
 const float WHEEL_CIRCUMFERENCE = WHEEL_DIAMETER * 3.14159;  // πd
 const float PULSES_PER_ROTATION = 357;   // Encoder pulses per wheel rotation
 const float CM_PER_PULSE = (WHEEL_CIRCUMFERENCE * 100) / PULSES_PER_ROTATION;  // cm per pulse
 const int DECEL_PULSES = 50;               // Start decelerating within this many pulses remaining
 
-// PID for encoder-based turn (encoder only, no gyro in control loop)
-const float KP_ENCODER = 2.0;
-const float KI_ENCODER = 0.01;
-const float KD_ENCODER = 0.4;
+// Encoder-based turn with PID sync (no progressive decel, constant base speed)
+const int BASE_TURN_SPEED = 165;          // Constant base speed for both wheels
+const float KP_SYNC = 2.0;                // Encoder sync proportional gain
+const float KI_SYNC = 0.1;                // Encoder sync integral
+const float KD_SYNC = 0.5;                // Encoder sync derivative
 
-// PID variables
-float encoderIntegral = 0;
-float lastEncoderError = 0;
+// PID variables for encoder sync
+float syncIntegral = 0;
+float lastSyncError = 0;
 
 // Gyro-free wrapper: reuse encoder-based turn for arbitrary angle
 bool turn(float angle) {
@@ -64,83 +79,85 @@ bool turnEncoderBased(float angle) {
     Serial.print(targetPulses);
     Serial.println(" pulses)");
     
-    // Reset encoder and PID
+    // Reset encoder and PID controllers
     encoder.reset(true);
-    encoderIntegral = 0;
-    lastEncoderError = 0;
+    syncIntegral = 0;
+    lastSyncError = 0;
     
     unsigned long startTime = millis();
-    float commandedSpeed = 0;  // Smoothed speed command to avoid sudden jerks
     bool success = false;
     
     while (millis() - startTime < TURN_TIMEOUT) {
         // Update WiFi
         wifiMgr.update();
         
-        // Get encoder data (use absolute values for comparison)
+        // Get encoder pulse counts
         long leftPulses = abs(encoder.getPulseCount1());
         long rightPulses = abs(encoder.getPulseCount2());
-        long metricPulses = max(leftPulses, rightPulses);  // control by leading wheel to avoid overshoot
         
-        // Calculate encoder error
-        float encoderError = targetPulses - metricPulses;
-        
-        // Check if we've reached the target (encoder-based only)
-        // Stop early (20 pulses before) to account for momentum
-        if (encoderError <= 20) {
+        // Check completion: stop when BOTH wheels reach target (exact same count)
+        if (leftPulses >= (long)targetPulses && rightPulses >= (long)targetPulses) {
             motorControl.stop();
-            delay(100);  // Brief hold to prevent creep from momentum
+            delay(100);
             success = true;
-            Serial.print("Turn complete! Pulses: ");
-            Serial.print(metricPulses + 20);  // Report what we likely reached by now
-            Serial.print("/");
+            Serial.print("Turn complete! Pulses: L:");
+            Serial.print(leftPulses);
+            Serial.print(" R:");
+            Serial.print(rightPulses);
+            Serial.print(" Target:");
             Serial.print((long)targetPulses);
             Serial.println();
             break;
         }
         
-        // Compute a speed target from remaining pulses (P-only magnitude)
-        // Keep direction fixed by desired turn side
-        float targetSpeed = KP_ENCODER * encoderError; // encoderError >= 0
-
-        // Ensure minimum speed - keep motors moving
-        if (targetSpeed < MIN_TURN_SPEED) targetSpeed = MIN_TURN_SPEED;
-
-        // Limit maximum speed
-        if (targetSpeed > TURN_SPEED) targetSpeed = TURN_SPEED;
-
-        // Decelerate as we approach the target to avoid overshoot
-        if (encoderError < DECEL_PULSES) {
-            float decelFactor = encoderError / (float)DECEL_PULSES; // 1 -> 0
-            float maxAllowed = MIN_TURN_SPEED + decelFactor * (TURN_SPEED - MIN_TURN_SPEED);
-            if (targetSpeed > maxAllowed) targetSpeed = maxAllowed;
+        // Encoder-based PID sync: keep left and right pulses exactly matched
+        float syncError = (float)(leftPulses - rightPulses);
+        float syncCorrection = KP_SYNC * syncError + 
+                              KI_SYNC * syncIntegral + 
+                              KD_SYNC * (syncError - lastSyncError);
+        syncIntegral += syncError;
+        lastSyncError = syncError;
+        
+        // Calculate remaining pulses for each wheel
+        long leftRemaining = (long)targetPulses - leftPulses;
+        long rightRemaining = (long)targetPulses - rightPulses;
+        
+        // Both wheels at base speed with sync correction, slow down wheel that's ahead
+        int leftSpeed, rightSpeed;
+        if (leftRemaining > 0 && rightRemaining > 0) {
+            leftSpeed = constrain(BASE_TURN_SPEED - (int)syncCorrection, MIN_TURN_SPEED, BASE_TURN_SPEED + 20);
+            rightSpeed = constrain(BASE_TURN_SPEED + (int)syncCorrection, MIN_TURN_SPEED, BASE_TURN_SPEED + 20);
+        } else if (leftRemaining > 0) {
+            // Only left wheel needs to continue
+            leftSpeed = MIN_TURN_SPEED;
+            rightSpeed = 0;
+        } else if (rightRemaining > 0) {
+            // Only right wheel needs to continue
+            leftSpeed = 0;
+            rightSpeed = MIN_TURN_SPEED;
+        } else {
+            leftSpeed = 0;
+            rightSpeed = 0;
         }
-
-        // Apply a small acceleration limit to soften starts/changes
-        float maxDelta = 16;  // allow slightly faster ramp to avoid stall
-        float delta = targetSpeed - commandedSpeed;
-        if (delta > maxDelta) delta = maxDelta;
-        if (delta < -maxDelta) delta = -maxDelta;
-        commandedSpeed += delta;
         
         // Apply turn based on angle direction (positive = right/CW)
         // Motor A = Left, Motor B = Right
         if (angle > 0) {
             // Turn right (CW) - Left forward, Right backward
-            motorControl.setMotorASpeed((int)commandedSpeed);
-            motorControl.setMotorBSpeed(-(int)commandedSpeed);
+            motorControl.setMotorASpeed(leftSpeed);
+            motorControl.setMotorBSpeed(-rightSpeed);
         } else {
             // Turn left (CCW) - Left backward, Right forward
-            motorControl.setMotorASpeed(-(int)commandedSpeed);
-            motorControl.setMotorBSpeed((int)commandedSpeed);
+            motorControl.setMotorASpeed(-leftSpeed);
+            motorControl.setMotorBSpeed(rightSpeed);
         }
         
-        // Log progress with more detail
-        String output = "EncTurn|Pulses:" + String(metricPulses) + "/" + String((long)targetPulses) +
-                        "|EncErr:" + String(encoderError, 1) +
-                        "|L:" + String(leftPulses) + 
-                        "|R:" + String(rightPulses) +
-                        "|Speed:" + String((int)commandedSpeed);
+        // Log progress
+        String output = "Turn|L:" + String(leftPulses) + "/" + String((long)targetPulses) +
+                        "|R:" + String(rightPulses) + "/" + String((long)targetPulses) +
+                        "|LSpd:" + String(leftSpeed) + 
+                        "|RSpd:" + String(rightSpeed) +
+                        "|Sync:" + String(syncCorrection, 1);
         wifiMgr.sendDataLn(output);
         Serial.println(output);
         
@@ -154,6 +171,83 @@ bool turnEncoderBased(float angle) {
     if (!success) {
         Serial.println("Turn timeout!");
         return false;
+    }
+    
+    // Cardinal heading snap: align to nearest 0°, 90°, 180°, or 270° relative to starting yaw
+    if (gyro_ok && startingYawSet) {
+        updateGyro();
+        
+        // Calculate 4 cardinal headings relative to starting yaw
+        float cardinals[4];
+        cardinals[0] = robotStartingYaw;              // 0°
+        cardinals[1] = robotStartingYaw + 90.0f;      // +90°
+        cardinals[2] = robotStartingYaw + 180.0f;     // +180°
+        cardinals[3] = robotStartingYaw - 90.0f;      // -90°
+        
+        // Normalize all cardinals to [-180, 180]
+        for (int i = 0; i < 4; i++) {
+            while (cardinals[i] > 180.0f) cardinals[i] -= 360.0f;
+            while (cardinals[i] < -180.0f) cardinals[i] += 360.0f;
+        }
+        
+        // Find closest cardinal heading
+        float closestCardinal = cardinals[0];
+        float minError = 360.0f;
+        for (int i = 0; i < 4; i++) {
+            float error = cardinals[i] - currentYaw;
+            while (error > 180.0f) error -= 360.0f;
+            while (error < -180.0f) error += 360.0f;
+            if (abs(error) < minError) {
+                minError = abs(error);
+                closestCardinal = cardinals[i];
+            }
+        }
+        
+        Serial.print("Snapping to cardinal: ");
+        Serial.print(closestCardinal);
+        Serial.print(" (current: ");
+        Serial.print(currentYaw);
+        Serial.print(", error: ");
+        Serial.print(minError);
+        Serial.println(")");
+        
+        // Snap to closest cardinal if error > tolerance
+        const float gyroTolerance = 2.5f;
+        const int fineSpeed = 160;
+        int corrections = 0;
+        const int maxCorrections = 50;
+        
+        while (corrections < maxCorrections) {
+            updateGyro();
+            float yawError = closestCardinal - currentYaw;
+            while (yawError > 180.0f) yawError -= 360.0f;
+            while (yawError < -180.0f) yawError += 360.0f;
+            
+            if (abs(yawError) <= gyroTolerance) {
+                Serial.print("Cardinal snap complete. Final yaw: ");
+                Serial.println(currentYaw);
+                break;
+            }
+            
+            // Apply gentle correction
+            if (yawError > 0) {
+                motorControl.setMotorASpeed(fineSpeed);
+                motorControl.setMotorBSpeed(-fineSpeed);
+            } else {
+                motorControl.setMotorASpeed(-fineSpeed);
+                motorControl.setMotorBSpeed(fineSpeed);
+            }
+            
+            String output = "CardinalSnap|Target:" + String(closestCardinal) + "|Current:" + String(currentYaw) + "|Err:" + String(yawError);
+            wifiMgr.sendDataLn(output);
+            Serial.println(output);
+            
+            delay(20);
+            corrections++;
+        }
+        
+        motorControl.stop();
+        delay(100);
     }
     
     return true;

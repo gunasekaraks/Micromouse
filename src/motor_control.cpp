@@ -6,7 +6,7 @@ MotorControl::MotorControl(int ain1, int ain2, int bin1, int bin2, int stby)
       pwmFrequency(20000), pwmResolution(8),
     currentSpeedA(0), currentSpeedB(0), maxSpeed(255),
     speedBiasA(0), speedBiasB(0),
-      kp(2.75), ki(0.00005), kd(0.0007),
+      kp(2.5), ki(0.00005), kd(0.0009),
       previousError(0.0), integralError(0.0),
       encoder(nullptr), isMoving(false),
       targetDistance(0.0), startLeftDistance(0.0), startRightDistance(0.0)
@@ -59,18 +59,32 @@ void MotorControl::setMotorASpeed(int speed)
         // Forward: IN1 = PWM, IN2 = 0 (motor wiring reversed)
         ledcWrite(pwmChannelA1, speed);
         ledcWrite(pwmChannelA2, 0);
+        Serial.print("MotA FWD|IN1(Ch");
+        Serial.print(pwmChannelA1);
+        Serial.print(")=");
+        Serial.print(speed);
+        Serial.print("|IN2(Ch");
+        Serial.print(pwmChannelA2);
+        Serial.println(")=0");
     }
     else if (speed < 0)
     {
         // Backward: IN1 = 0, IN2 = PWM (motor wiring reversed)
         ledcWrite(pwmChannelA1, 0);
         ledcWrite(pwmChannelA2, -speed);
+        Serial.print("MotA BWD|IN1(Ch");
+        Serial.print(pwmChannelA1);
+        Serial.print(")=0|IN2(Ch");
+        Serial.print(pwmChannelA2);
+        Serial.print(")=");
+        Serial.println(-speed);
     }
     else
     {
         // Stop: both 0
         ledcWrite(pwmChannelA1, 0);
         ledcWrite(pwmChannelA2, 0);
+        Serial.println("MotA STOP");
     }
     currentSpeedA = speed;
 }

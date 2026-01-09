@@ -24,8 +24,8 @@ static MotorControl motorControl(25, 13, 14, 18, 32);
 // Parameters
 static int baseSpeed = 160;
 static float initialYaw = 0.0f;
-static float yawTolerance = 1.0f;   // degrees
-static const float moveDistance = 0.15f;  // 15cm in meters
+static float yawTolerance = 2.0f;   // degrees
+static const float moveDistance = 0.18f;  // 18 cm cell length
 
 // Internal helpers
 static void disableGyroInterrupt();
@@ -159,7 +159,7 @@ void loop()
 
     delay(200);
 
-    // After move: Check yaw alignment
+    // After move: Check yaw alignment (limited correction)
     updateGyro();
     float yawError = initialYaw - currentYaw;
     while (yawError > 180.0f) yawError -= 360.0f;
@@ -170,8 +170,9 @@ void loop()
     Serial.print(" | Error: ");
     Serial.println(yawError);
 
+    // Only correct if beyond tolerance, but limit total correction angle inside alignToYaw
     if (abs(yawError) > yawTolerance) {
-        Serial.println("Yaw drift detected, correcting...");
+        Serial.println("Yaw drift detected, limited correction...");
         alignToYaw(initialYaw);
     }
 
@@ -205,9 +206,13 @@ static void alignToYaw(float targetYaw)
         return;
     }
 
-    int turnSpeed = 160;
-    while (abs(yawError) > yawTolerance) {
+    const int turnSpeed = 110;          // gentler correction
+    const float maxCorrection = 8.0f;   // cap correction to avoid big turns
+    float corrected = 0.0f;
+
+    while (abs(yawError) > yawTolerance && abs(corrected) < maxCorrection) {
         updateGyro();
+        float prevYaw = currentYaw;
         yawError = targetYaw - currentYaw;
         while (yawError > 180.0f) yawError -= 360.0f;
         while (yawError < -180.0f) yawError += 360.0f;
@@ -223,11 +228,18 @@ static void alignToYaw(float targetYaw)
         String output = "Yaw_:" + String(currentYaw) + "|Target:" + String(targetYaw) + "|Err:" + String(yawError);
         sendWifiLn(output);
         delay(20);
+
+        // Track how much we've actually rotated to enforce the cap
+        updateGyro();
+        float delta = currentYaw - prevYaw;
+        while (delta > 180.0f) delta -= 360.0f;
+        while (delta < -180.0f) delta += 360.0f;
+        corrected += delta;
     }
 
     motorControl.stop();
     delay(200);
-    Serial.println("Alignment complete");
+    Serial.println("Alignment complete (capped)");
 }
 
 static inline void sendWifiLn(const String& s)

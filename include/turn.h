@@ -22,4 +22,8 @@ bool turn180();
 // More accurate than gyro-only turning
 bool turnEncoderBased(float angle);
 
+// Set the robot's starting yaw for cardinal heading alignment
+// Should be called after gyro stabilization in setup()
+void setRobotStartingYaw(float yaw);
+
 #endif // TURN_H
