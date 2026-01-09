@@ -285,7 +285,7 @@ static void alignToYaw(float targetYaw)
         return;
     }
 
-    int turnSpeed = BASE_SPEED - 10;
+    int turnSpeed = BASE_SPEED - 8;
     while (abs(yawError) > yawTolerance) {
         updateGyro();
         yawError = targetYaw - currentYaw;

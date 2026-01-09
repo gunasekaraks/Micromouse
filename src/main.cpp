@@ -61,11 +61,11 @@ void setup()
     wifiMgr.begin();
     encoder.begin();
     motorControl.begin(&encoder);
-    motorControl.setPIDCoefficients(2.5f, 0.00005f, 0.0009f);
+    motorControl.setPIDCoefficients(2.5f, 0.0001f, 0.055f);
 
     // Adjust motor bias to compensate for mechanical misalignment
     // Right wheel drifts right, so reduce right motor speed with negative bias
-    motorControl.setRightMotorBias(35);  // Adjust this value: try -5 to -20 if robot still drifts
+    motorControl.setRightMotorBias(30);  // Adjust this value: try -5 to -20 if robot still drifts
     // Positive value = increase right motor speed, Negative value = decrease right motor speed
 
     // Initialize and stabilize gyro

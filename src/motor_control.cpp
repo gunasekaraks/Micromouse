@@ -1,12 +1,15 @@
 #include "motor_control.h"
 
+// Enforce a minimum commanded speed for forward/backward movement
+static const int MIN_MOVE_SPEED = 140;
+
 MotorControl::MotorControl(int ain1, int ain2, int bin1, int bin2, int stby)
     : pinAin1(ain1), pinAin2(ain2), pinBin1(bin1), pinBin2(bin2), pinSTBY(stby),
       pwmChannelA1(0), pwmChannelA2(1), pwmChannelB1(2), pwmChannelB2(3),
       pwmFrequency(20000), pwmResolution(8),
     currentSpeedA(0), currentSpeedB(0), maxSpeed(255),
     speedBiasA(0), speedBiasB(0),
-      kp(2.5), ki(0.00005), kd(0.0009),
+      kp(2.5), ki(0.0001), kd(0.0095),
       previousError(0.0), integralError(0.0),
       encoder(nullptr), isMoving(false),
       targetDistance(0.0), startLeftDistance(0.0), startRightDistance(0.0)
@@ -128,6 +131,9 @@ void MotorControl::moveForward(int speed)
         speed = maxSpeed;
     if (speed < 0)
         speed = 0;
+    // Enforce minimum forward speed
+    if (speed > 0 && speed < MIN_MOVE_SPEED)
+        speed = MIN_MOVE_SPEED;
 
     // Apply optional per-motor bias to correct hardware drift
     int speedA = speed + speedBiasA;
@@ -143,6 +149,9 @@ void MotorControl::moveBackward(int speed)
         speed = maxSpeed;
     if (speed < 0)
         speed = 0;
+    // Enforce minimum backward speed
+    if (speed > 0 && speed < MIN_MOVE_SPEED)
+        speed = MIN_MOVE_SPEED;
 
     setMotorSpeed(-speed, -speed);
     Serial.println("Moving backward at speed: " + String(speed));
@@ -262,6 +271,8 @@ void MotorControl::moveForwardDistance(float distance, int baseSpeed)
         baseSpeed = maxSpeed;
     if (baseSpeed < 0)
         baseSpeed = 0;
+    if (baseSpeed > 0 && baseSpeed < MIN_MOVE_SPEED)
+        baseSpeed = MIN_MOVE_SPEED;
 
     // Reset encoder readings
     encoder->reset(true);
@@ -329,6 +340,8 @@ void MotorControl::moveBackwardDistance(float distance, int baseSpeed)
         baseSpeed = maxSpeed;
     if (baseSpeed < 0)
         baseSpeed = 0;
+    if (baseSpeed > 0 && baseSpeed < MIN_MOVE_SPEED)
+        baseSpeed = MIN_MOVE_SPEED;
 
     // Reset encoder readings
     encoder->reset(true);
