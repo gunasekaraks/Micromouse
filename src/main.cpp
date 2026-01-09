@@ -7,6 +7,7 @@
 #include "gyro.h"
 #include "search_run.h"
 #include "turn.h"
+#include "buzzer.h"
 
 // Set to 1 to run a simple 90° turn test instead of the search run
 #define RUN_TURN_TEST 0
@@ -180,6 +181,17 @@ void setup()
         Serial.println("✓ All ToF sensors verified and working");
     }
 
+    delay(1000);
+
+    // Initialize buzzer
+    Serial.println("Initializing buzzer...");
+    buzzer_init();
+    
+    // Play tune to indicate ready state
+    Serial.println("Playing ready tone...");
+    play_tune();
+    Serial.println("✓ Buzzer ready - System initialization complete!");
+    
     delay(1000);
 
     // Initialize search run
