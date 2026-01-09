@@ -66,7 +66,7 @@ void setup()
 
     // Adjust motor bias to compensate for mechanical misalignment
     // Right wheel drifts right, so reduce right motor speed with negative bias
-    motorControl.setRightMotorBias(30);  // Adjust this value: try -5 to -20 if robot still drifts
+    motorControl.setRightMotorBias(28);  // Adjust this value: try -5 to -20 if robot still drifts
     // Positive value = increase right motor speed, Negative value = decrease right motor speed
 
     // Initialize and stabilize gyro
