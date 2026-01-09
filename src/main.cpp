@@ -61,7 +61,7 @@ void setup()
     wifiMgr.begin();
     encoder.begin();
     motorControl.begin(&encoder);
-    motorControl.setPIDCoefficients(2.5f, 0.0005f, 0.00005f);
+    motorControl.setPIDCoefficients(2.5f, 0.00005f, 0.0009f);
 
     // Initialize and stabilize gyro
     Serial.println("Initializing gyro...");

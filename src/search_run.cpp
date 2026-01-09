@@ -17,7 +17,7 @@ static const float CELL_METERS = 0.18f;    // 18 cm cells
 // ToF wall thresholds
 static const float FRONT_THRESH_MM = 90.0f; // front wall threshold = 9 cm (18 cm cell)
 static const float SIDE_THRESH_MM  = 90.0f; // left/right wall threshold ≈5 cm (16.8 cm corridor, 7.5 cm sensor gap)
-static const int BASE_SPEED = 170;         // base forward speed matching moveforward.cpp
+static const int BASE_SPEED = 165;         // base forward speed matching moveforward.cpp
 
 // Maze representation: walls per cell (N,E,S,W bits)
 static uint8_t walls[SIZE][SIZE];   // bit0=N, bit1=E, bit2=S, bit3=W; 1=wall known, 0=open/unknown
@@ -135,80 +135,84 @@ static void detectCenter() {
     }
 }
 
-// Flood fill: compute Manhattan-based distances to goal, prioritizing exploration
-static void computeFloodFill()
+// A* search from current position to goal, considering only known walls
+// Returns true if path exists, updates dist[] with g-cost from current cell
+static bool computeAStarPath()
 {
-    const int INF = 9999;
-    
-    // Initialize all cells with high distance
-    for (int y = 0; y < SIZE; ++y) {
-        for (int x = 0; x < SIZE; ++x) {
+    const int INF = 1e9;
+    for (int y = 0; y < SIZE; ++y)
+        for (int x = 0; x < SIZE; ++x)
             dist[y][x] = INF;
+
+    // Priority queue: [f-cost, x, y]
+    static int pq_f[SIZE * SIZE], pq_x[SIZE * SIZE], pq_y[SIZE * SIZE];
+    int pq_size = 0;
+    
+    // g-cost (actual distance from start)
+    static int g_cost[SIZE][SIZE];
+    for (int y = 0; y < SIZE; ++y)
+        for (int x = 0; x < SIZE; ++x)
+            g_cost[y][x] = INF;
+    
+    // Start from current robot position
+    g_cost[ry][rx] = 0;
+    dist[ry][rx] = 0;
+    int f_cost = manhattan(rx, ry);
+    pq_f[pq_size] = f_cost; pq_x[pq_size] = rx; pq_y[pq_size] = ry;
+    pq_size++;
+    
+    bool foundGoal = false;
+    
+    while (pq_size > 0) {
+        // Extract min f-cost (simple linear search for small mazes)
+        int minIdx = 0;
+        for (int i = 1; i < pq_size; ++i) {
+            if (pq_f[i] < pq_f[minIdx]) minIdx = i;
         }
-    }
-    
-    // Set goal cells to 0
-    if (goal_found) {
-        dist[goal_y][goal_x] = 0;
-        dist[goal_y][goal_x + 1] = 0;
-        dist[goal_y + 1][goal_x] = 0;
-        dist[goal_y + 1][goal_x + 1] = 0;
-    } else {
-        // No goal yet - use center as temporary target
-        dist[7][7] = 0;
-        dist[7][8] = 0;
-        dist[8][7] = 0;
-        dist[8][8] = 0;
-    }
-    
-    // Flood fill using queue (BFS)
-    static int queue_x[SIZE * SIZE], queue_y[SIZE * SIZE];
-    int qhead = 0, qtail = 0;
-    
-    // Add goal cells to queue
-    if (goal_found) {
-        queue_x[qtail] = goal_x; queue_y[qtail++] = goal_y;
-        queue_x[qtail] = goal_x + 1; queue_y[qtail++] = goal_y;
-        queue_x[qtail] = goal_x; queue_y[qtail++] = goal_y + 1;
-        queue_x[qtail] = goal_x + 1; queue_y[qtail++] = goal_y + 1;
-    } else {
-        queue_x[qtail] = 7; queue_y[qtail++] = 7;
-        queue_x[qtail] = 8; queue_y[qtail++] = 7;
-        queue_x[qtail] = 7; queue_y[qtail++] = 8;
-        queue_x[qtail] = 8; queue_y[qtail++] = 8;
-    }
-    
-    // BFS flood fill
-    while (qhead < qtail) {
-        int x = queue_x[qhead];
-        int y = queue_y[qhead];
-        qhead++;
+        int f = pq_f[minIdx];
+        int x = pq_x[minIdx];
+        int y = pq_y[minIdx];
+        // Remove from queue
+        pq_f[minIdx] = pq_f[pq_size - 1];
+        pq_x[minIdx] = pq_x[pq_size - 1];
+        pq_y[minIdx] = pq_y[pq_size - 1];
+        pq_size--;
         
-        int currentDist = dist[y][x];
+        // Check if goal reached
+        if (isGoal(x, y)) {
+            foundGoal = true;
+            break;
+        }
         
-        // Check all 4 neighbors
+        int current_g = g_cost[y][x];
+        
+        // Explore neighbors (only if no known wall)
         Dir directions[4] = {NORTH, EAST, SOUTH, WEST};
         for (int i = 0; i < 4; ++i) {
             Dir d = directions[i];
-            
-            // Skip if known wall
-            if (walls[y][x] & wallBit(d)) continue;
+            if (walls[y][x] & wallBit(d)) continue;  // Skip known walls
             
             int nx = x + dx(d);
             int ny = y + dy(d);
+            if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;  // Out of bounds
             
-            // Skip out of bounds
-            if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;
-            
-            // Update distance if we found a shorter path
-            if (dist[ny][nx] > currentDist + 1) {
-                dist[ny][nx] = currentDist + 1;
-                queue_x[qtail] = nx;
-                queue_y[qtail] = ny;
-                qtail++;
+            int tentative_g = current_g + 1;
+            if (tentative_g < g_cost[ny][nx]) {
+                g_cost[ny][nx] = tentative_g;
+                dist[ny][nx] = tentative_g;  // Store g-cost for gradient descent
+                int h = manhattan(nx, ny);
+                int new_f = tentative_g + h;
+                
+                // Add to queue
+                pq_f[pq_size] = new_f;
+                pq_x[pq_size] = nx;
+                pq_y[pq_size] = ny;
+                pq_size++;
             }
         }
     }
+    
+    return foundGoal;
 }
 
 // Sense walls using ToF readings given current robot direction
@@ -264,7 +268,7 @@ static void orientTo(Dir target)
 
 // Move forward one cell
 // Gyro-assisted alignment after forward move
-static float yawTolerance = 1.75f;
+static float yawTolerance = 2.0f;
 
 static void alignToYaw(float targetYaw)
 {
@@ -281,7 +285,7 @@ static void alignToYaw(float targetYaw)
         return;
     }
 
-    int turnSpeed = BASE_SPEED - 5;
+    int turnSpeed = BASE_SPEED - 10;
     while (abs(yawError) > yawTolerance) {
         updateGyro();
         yawError = targetYaw - currentYaw;
@@ -397,36 +401,36 @@ static bool ensureFrontClear()
     return true;
 }
 
-// Choose next direction: PRIORITIZE unknown edges, then follow flood fill gradient
+// Choose next direction: prioritize unexplored cells over backtracking
 static Dir chooseNext()
 {
-    // Directions in preference order: forward, right, left, back
-    Dir order[4] = { rdir, turnRight(rdir), turnLeft(rdir), turnBack(rdir) };
+    int best = 1e9;
+    Dir bestDir = NORTH;
+    bool found = false;
     
-    // PRIORITY 1: Check for unknown edges (unexplored)
+    // Directions in preference order: forward, left, right, back
+    Dir order[4] = { rdir, turnLeft(rdir), turnRight(rdir), turnBack(rdir) };
+    
+    // PRIORITY 1: Unexplored adjacent cells (not visited yet)
+    // Forward is checked first due to order array
     for (int i = 0; i < 4; ++i) {
         Dir d = order[i];
         int nx = rx + dx(d);
         int ny = ry + dy(d);
         if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;
+        if (walls[ry][rx] & wallBit(d)) continue;  // Skip known walls
         
-        // Skip known walls
-        if (walls[ry][rx] & wallBit(d)) continue;
-        
-        // If edge is unknown, explore it
-        if (!(known[ry][rx] & wallBit(d))) {
-            send(String("EXPLORE|Cell(") + rx + "," + ry + ")|Dir:" + (int)d + "|Unknown");
-            return d;
+        // If neighbor is not visited, go there immediately
+        if (!visited[ny][nx]) {
+            bestDir = d;
+            found = true;
+            send(String("Exploring unvisited cell to (") + nx + "," + ny + ")");
+            return bestDir;  // Highest priority - return immediately
         }
     }
     
-    // PRIORITY 2: All adjacent edges are known - follow flood fill gradient
-    computeFloodFill();
-    
-    int best = 9999;
-    Dir bestDir = rdir;
-    bool found = false;
-    
+    // PRIORITY 2: Backtrack through visited cells using A* gradient
+    // Only happens when all adjacent cells are already visited
     for (int i = 0; i < 4; ++i) {
         Dir d = order[i];
         int nx = rx + dx(d);
@@ -442,24 +446,26 @@ static Dir chooseNext()
         }
     }
     
-    if (found) {
-        send(String("BACKTRACK|Cell(") + rx + "," + ry + ")|Dir:" + (int)bestDir + "|Dist:" + best);
-        return bestDir;
-    }
-    
     // Last resort: any open direction
-    for (int i = 0; i < 4; ++i) {
-        Dir d = (Dir)i;
-        int nx = rx + dx(d);
-        int ny = ry + dy(d);
-        if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;
-        if (walls[ry][rx] & wallBit(d)) continue;
-        send(String("LAST_RESORT|Dir:") + (int)d);
-        return d;
+    if (!found) {
+        for (int i = 0; i < 4; ++i) {
+            Dir d = (Dir)i;
+            int nx = rx + dx(d);
+            int ny = ry + dy(d);
+            if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;
+            if (walls[ry][rx] & wallBit(d)) continue;
+            bestDir = d;
+            found = true;
+            send(String("Last resort|Dir:") + (int)d);
+            break;
+        }
     }
     
-    send(String("TRAPPED|Cell(") + rx + "," + ry + ")|All neighbors blocked");
-    return rdir;  // Stuck
+    if (!found) {
+        send(String("TRAPPED|Cell(") + rx + "," + ry + ")|All neighbors blocked");
+    }
+    
+    return bestDir;
 }
 
 void begin(WiFiManager* w, Encoder* e, MotorControl* m, int startX, int startY, Dir startDir)
@@ -503,7 +509,10 @@ void run()
         // Update WiFi client connection
         if (wifi) wifi->update();
 
-        // Choose next direction: prioritizes unknown edges, then follows flood fill gradient
+        // Recompute A* path using current knowledge
+        bool pathExists = computeAStarPath();
+
+        // Choose next direction by lowest neighbor distance, verify unknown edges using relevant ToF
         while (true) {
             // Refresh WiFi client
             if (wifi) wifi->update();
@@ -523,7 +532,8 @@ void run()
             // CRITICAL: Check if this direction has a known wall - if so, replan
             if (walls[ry][rx] & wallBit(next)) {
                 send(String("BLOCKED|Cell(") + rx + "," + ry + ")|Dir:" + nextDir + " is blocked by known wall");
-                continue;  // Re-plan with chooseNext()
+                computeAStarPath();
+                continue;  // Re-plan, don't try to move
             }
 
             // If edge already unknown, validate with ToF before moving
@@ -539,7 +549,7 @@ void run()
                 } else if (next == turnLeft(rdir)) {
                     // Left: need to turn first to get accurate ToF reading
                     orientTo(next);
-                    if (!readToF()) { continue; }
+                    if (!readToF()) { computeAStarPath(); continue; }
                     float leftFront = tof_distance[TOF_FRONT];
                     clear = (leftFront == 0) || (leftFront > FRONT_THRESH_MM);
                     if (!clear) {
@@ -551,7 +561,7 @@ void run()
                 } else if (next == turnRight(rdir)) {
                     // Right: need to turn first to get accurate ToF reading
                     orientTo(next);
-                    if (!readToF()) { continue; }
+                    if (!readToF()) { computeAStarPath(); continue; }
                     float rightFront = tof_distance[TOF_FRONT];
                     clear = (rightFront == 0) || (rightFront > FRONT_THRESH_MM);
                     if (!clear) {
@@ -562,13 +572,14 @@ void run()
                     }
                 } else { // back: orient and probe front
                     orientTo(next);
-                    if (!ensureFrontClear()) { continue; }
+                    if (!ensureFrontClear()) { computeAStarPath(); continue; }
                     setKnownEdge(rx, ry, next);
                     clear = true;
                 }
 
                 if (!clear) { 
-                    // Mark as wall and replan with chooseNext()
+                    // Mark as wall, recompute A*, and replan
+                    computeAStarPath(); 
                     continue; 
                 }
             }
