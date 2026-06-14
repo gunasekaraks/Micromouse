@@ -7,8 +7,6 @@ An autonomous robotic system that navigates and solves mazes using real-time sen
 This Micromouse implementation features a fully autonomous maze-solving robot built on the **ESP32** microcontroller. The robot uses a combination of Time-of-Flight sensors for wall detection, gyroscopic feedback for orientation control, and encoder-based distance tracking to navigate through a 16×16 cell maze with precision.
 ## Gallery
 
-A selection of Micromouse photos (hosted in the repository):
-
 <p align="center">
    <img src="https://raw.githubusercontent.com/gunasekaraks/Micromouse/main/WhatsApp%20Image%202026-06-14%20at%2019.38.53.jpeg" alt="Micromouse front view" width="320" />
    <img src="https://raw.githubusercontent.com/gunasekaraks/Micromouse/main/WhatsApp%20Image%202026-06-14%20at%2019.39.18%20(1).jpeg" alt="Micromouse top view" width="320" />
